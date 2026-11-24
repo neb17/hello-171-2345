@@ -1,0 +1,70 @@
+
+name: Build Clara DMG
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v4
+
+      - name: Extract ZIP automatically
+        run: |
+          set -e
+          mkdir extracted
+          ZIP=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
+          if [ -z "$ZIP" ]; then
+            echo "ZIP file not found"
+            exit 1
+          fi
+          unzip -o "$ZIP" -d extracted
+
+      - name: Find project files
+        run: |
+          HTML=$(find extracted -name index.html | head -n 1)
+          PROJECT=$(dirname "$HTML")
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
+
+      - name: Build macOS application
+        run: |
+          set -e
+          APP="Clara.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" dist
+
+          cp "$PROJECT/index.html" "$APP/Contents/Resources/index.html"
+
+          cat > "$APP/Contents/Info.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <plist version="1.0">
+          <dict>
+          <key>CFBundleName</key><string>Clara</string>
+          <key>CFBundleIdentifier</key><string>com.neb17.clara</string>
+          <key>CFBundleExecutable</key><string>ClaraApp</string>
+          <key>CFBundlePackageType</key><string>APPL</string>
+          <key>LSMinimumSystemVersion</key><string>12.0</string>
+          </dict>
+          </plist>
+          EOF
+
+          swiftc -O -mmacosx-version-min=12.0 \
+            -framework Cocoa -framework WebKit \
+            "$PROJECT/macos/ClaraApp.swift" \
+            -o "$APP/Contents/MacOS/ClaraApp"
+
+          codesign --force --deep --sign - "$APP"
+
+          hdiutil create -volname Clara \
+            -srcfolder "$APP" -ov -format UDZO \
+            dist/Clara.dmg
+
+      - name: Upload finished DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clara-macOS-DMG
+          path: dist/Clara.dmg
